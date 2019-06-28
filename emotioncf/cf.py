@@ -511,7 +511,8 @@ class NNMF_multiplicative(BaseCF):
 		X_est_prev = np.dot(self.W, self.H)
 
 		ctr = 1
-		while ctr <= max_iterations or fit_residual < fit_error_limit:
+		fit_residual = np.inf
+		while ctr <= max_iterations and fit_residual > fit_error_limit:
 		# while ctr <= max_iterations or curRes < error_limit or fit_residual < fit_error_limit:
 			# Update W: A=A.*(((W.*X)*Y')./((W.*(A*Y))*Y'));
 			self.W *= np.dot(masked_X, self.H.T) / np.dot(mask * np.dot(self.W, self.H), self.H.T)
