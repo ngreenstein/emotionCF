@@ -508,11 +508,12 @@ class NNMF_multiplicative(BaseCF):
 			masked_X = self.ratings.values
 			mask = np.ones(self.ratings.shape)
 
-		X_est_prev = np.dot(self.W, self.H)
+		X_est_initial = np.dot(self.W, self.H)
+		X_est_prev = X_est_initial
 
 		ctr = 1
 		fit_residual = np.inf
-		while ctr <= max_iterations and fit_residual > fit_error_limit:
+		while ctr <= max_iterations:
 		# while ctr <= max_iterations or curRes < error_limit or fit_residual < fit_error_limit:
 			# Update W: A=A.*(((W.*X)*Y')./((W.*(A*Y))*Y'));
 			self.W *= np.dot(masked_X, self.H.T) / np.dot(mask * np.dot(self.W, self.H), self.H.T)
@@ -525,13 +526,22 @@ class NNMF_multiplicative(BaseCF):
 			# Evaluate
 			X_est = np.dot(self.W, self.H)
 			err = mask * (X_est_prev - X_est)
-			fit_residual = np.sqrt(np.sum(err ** 2))
+			fit_residual = np.sqrt(np.sum(err ** 2)) # do we want to compare this to the initial error?
 			X_est_prev = X_est
 			# curRes = linalg.norm(mask * (masked_X - X_est), ord='fro')
-			if ctr % 10 == 0 and verbose:
-				print('\tCurrent Iteration {}:'.format(ctr))
-				print('\tfit residual', np.round(fit_residual, 4))
-				# print('\ttotal residual', np.round(curRes, 4))
+			
+			if ctr % 10 == 0:
+
+				if fit_residual <= fit_error_limit:
+					if verbose:
+						print('\tConverged after ', ctr, 'iterations; fit residual = ', np.round(fit_residual, 4))
+					break
+				
+				if verbose:
+					print('\tCurrent Iteration {}:'.format(ctr))
+					print('\tfit residual', np.round(fit_residual, 4))
+					# print('\ttotal residual', np.round(curRes, 4))
+
 			ctr += 1
 		self.is_fit = True
 
@@ -573,7 +583,9 @@ class NNMF_sgd(BaseCF):
 		item_bias_reg=0.0,
 		user_bias_reg=0.0,
 		learning_rate=0.001,
-		n_iterations=10,
+		max_iterations=10,
+		n_iterations=None, # Legacy; overrides max_iterations if provided
+		fit_error_limit=1e-6,
 		verbose=False,
 		dilate_ts_n_samples=None):
 
@@ -581,7 +593,7 @@ class NNMF_sgd(BaseCF):
 
 		Args:
 			n_factors (int): Number of factors or components
-			max_iterations (int):  maximum number of interations (default=100)
+			max_iterations (int):  maximum number of interations (default=10)
 			error_limit (float): error tolerance (default=1e-6)
 			fit_error_limit (float): fit error tolerance (default=1e-6)
 			verbose (bool): verbose output during fitting procedure (default=True)
@@ -589,6 +601,9 @@ class NNMF_sgd(BaseCF):
 										in estimating time-series ratings
 
 		'''
+		
+		# Support legacy `n_iterations` param
+		if n_iterations: max_iterations = n_iterations
 
 		# initialize variables
 		n_users, n_items = self.ratings.shape
@@ -624,19 +639,19 @@ class NNMF_sgd(BaseCF):
 
 		# train weights
 		ctr = 1
-		while ctr <= n_iterations:
-			if ctr % 10 == 0 and verbose:
-				print('\tCurrent Iteration: {}'.format(ctr))
 
+		while ctr <= max_iterations:
 			training_indices = np.arange(len(sample_row))
 			np.random.shuffle(training_indices)
 
+			total_err = 0.
 			for idx in training_indices:
 				u = sample_row[idx]
 				i = sample_col[idx]
 				prediction = self._predict_single(u,i)
 
 				e = (ratings.iloc[u,i] - prediction) # error
+				total_err += e ** 2
 
 				# Update biases
 				self.user_bias[u] += (learning_rate * (e - self.user_bias_reg * self.user_bias[u]))
@@ -645,6 +660,18 @@ class NNMF_sgd(BaseCF):
 				# Update latent factors
 				self.user_vecs[u, :] += (learning_rate * (e * self.item_vecs[i, :] - self.user_fact_reg * self.user_vecs[u,:]))
 				self.item_vecs[i, :] += (learning_rate * (e * self.user_vecs[u, :] - self.item_fact_reg * self.item_vecs[i,:]))
+			
+			total_err = np.sqrt(total_err)
+			if ctr == 1: initial_err = total_err
+			
+			if total_err <= fit_error_limit: # do we want to compare to initial error? 
+				if verbose:
+					print('\tConverged after ', ctr, 'iterations; fit residual = ', np.round(total_err, 4))
+				break
+				
+			if verbose:
+				print('\tCurrent Iteration: {}'.format(ctr))
+				print('\terror', np.round(e, 4))
 			ctr += 1
 		self.is_fit = True
 
